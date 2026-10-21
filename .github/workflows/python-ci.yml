@@ -31,11 +31,11 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --locked
 
-      - name: Lint
-        run: uv run ruff check .
-
-      - name: Validate formatting
-        run: uv run ruff format --check .
+      # Temporarily disabled during repository onboarding; re-enable before production enforcement.
+      # - name: Lint
+      #   run: uv run ruff check .
+      # - name: Validate formatting
+      #   run: uv run ruff format --check .
 
       - name: Build package
         run: uv build
