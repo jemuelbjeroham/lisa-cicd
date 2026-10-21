@@ -13,6 +13,21 @@ on:
         required: false
         type: boolean
         default: false
+      checkout-sibling-repository:
+        description: Check out an additional public repository beside the caller
+        required: false
+        type: boolean
+        default: false
+      sibling-repository:
+        description: Public sibling repository in owner/repository format
+        required: false
+        type: string
+        default: jemuelbjeroham/net-ops-kb-rag
+      sibling-path:
+        description: Sibling directory name under GITHUB_WORKSPACE
+        required: false
+        type: string
+        default: net-ops-kb-rag
     # secrets:
     #   lisa-repository-token:
     #     description: Optional token with read access to jemuelbjeroham/LISA
@@ -26,10 +41,35 @@ jobs:
     name: Lint, build, and test
     runs-on: ubuntu-latest
     steps:
+      - name: Reject conflicting checkout modes
+        if: ${{ inputs.checkout-lisa-dependency && inputs.checkout-sibling-repository }}
+        run: |
+          echo "::error::checkout-lisa-dependency and checkout-sibling-repository are mutually exclusive."
+          exit 1
+
+      - name: Validate sibling repository inputs
+        if: ${{ inputs.checkout-sibling-repository }}
+        env:
+          SIBLING_REPOSITORY: ${{ inputs.sibling-repository }}
+          SIBLING_PATH: ${{ inputs.sibling-path }}
+        run: |
+          if [[ ! "$SIBLING_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::sibling-repository must use owner/repository format"
+            exit 1
+          fi
+          if [[ ! "$SIBLING_PATH" =~ ^[A-Za-z0-9_.-]+$ || "$SIBLING_PATH" == "." || "$SIBLING_PATH" == ".." ]]; then
+            echo "::error::sibling-path must be a single directory name under GITHUB_WORKSPACE"
+            exit 1
+          fi
+          if [[ "$SIBLING_PATH" == "LISA" || "$SIBLING_PATH" == "lisa-api" || "$SIBLING_PATH" == "caller" ]]; then
+            echo "::error::sibling-path conflicts with a workflow checkout directory"
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          path: ${{ inputs.checkout-lisa-dependency && 'lisa-api' || '.' }}
+          path: ${{ inputs.checkout-lisa-dependency && 'lisa-api' || inputs.checkout-sibling-repository && 'caller' || '.' }}
 
       - name: Check out LISA dependency
         if: ${{ inputs.checkout-lisa-dependency }}
@@ -37,6 +77,13 @@ jobs:
         with:
           repository: jemuelbjeroham/LISA
           path: LISA
+
+      - name: Check out sibling repository
+        if: ${{ inputs.checkout-sibling-repository }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ inputs.sibling-repository }}
+          path: ${{ inputs.sibling-path }}
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -63,9 +110,28 @@ jobs:
             fi
           done
 
+      - name: Diagnose sibling dependency checkout
+        if: ${{ inputs.checkout-sibling-repository }}
+        env:
+          SIBLING_PATH: ${{ inputs.sibling-path }}
+        run: |
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          pwd
+          ls -la "$GITHUB_WORKSPACE"
+          ls -la "$GITHUB_WORKSPACE/caller" || true
+          ls -la "$GITHUB_WORKSPACE/$SIBLING_PATH" || true
+          for project_file in "$GITHUB_WORKSPACE/caller/pyproject.toml" "$GITHUB_WORKSPACE/$SIBLING_PATH/pyproject.toml"; do
+            if [[ -f "$project_file" ]]; then
+              echo "Found $project_file"
+            else
+              echo "::error::Missing required project file: $project_file"
+              exit 1
+            fi
+          done
+
       - name: Install locked dependencies
         run: uv sync --locked
-        working-directory: ${{ inputs.checkout-lisa-dependency && 'lisa-api' || '.' }}
+        working-directory: ${{ inputs.checkout-lisa-dependency && 'lisa-api' || inputs.checkout-sibling-repository && 'caller' || '.' }}
 
       # Lint, formatting, and tests are temporarily disabled during development/onboarding;
       # restore them as quality gates before production.
@@ -76,7 +142,7 @@ jobs:
 
       - name: Build package
         run: uv build
-        working-directory: ${{ inputs.checkout-lisa-dependency && 'lisa-api' || '.' }}
+        working-directory: ${{ inputs.checkout-lisa-dependency && 'lisa-api' || inputs.checkout-sibling-repository && 'caller' || '.' }}
 
       # - name: Run deterministic unit tests
       #   env:
