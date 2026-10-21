@@ -46,6 +46,23 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
 
+      - name: Diagnose LISA dependency checkout
+        if: ${{ inputs.checkout-lisa-dependency }}
+        run: |
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "Current working directory: $(pwd)"
+          ls -la "$GITHUB_WORKSPACE"
+          ls -la "$GITHUB_WORKSPACE/LISA" || true
+          ls -la "$GITHUB_WORKSPACE/lisa-api" || true
+          for project_file in LISA/pyproject.toml lisa-api/pyproject.toml; do
+            if [[ -f "$GITHUB_WORKSPACE/$project_file" ]]; then
+              echo "Found $project_file"
+            else
+              echo "::error::Missing $project_file under GITHUB_WORKSPACE"
+              exit 1
+            fi
+          done
+
       - name: Install locked dependencies
         run: uv sync --locked
         working-directory: ${{ inputs.checkout-lisa-dependency && 'lisa-api' || '.' }}
