@@ -1,0 +1,107 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lisa}
+      POSTGRES_USER: ${POSTGRES_USER:-lisa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in lisa-cicd/.env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  net-tools-app:
+    build:
+      context: ../net-tools-app
+      dockerfile: Dockerfile
+      additional_contexts:
+        netops: ../net-ops-kb-rag
+    environment:
+      PORT: "8000"
+      HF_HOME: /home/app/.cache/huggingface
+    volumes:
+      - net-tools-chroma:/workspace/net-ops-kb-rag/storage/chroma
+      - huggingface-cache:/home/app/.cache/huggingface
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15m
+
+  lisa-api:
+    build:
+      context: ..
+      dockerfile: lisa-api/Dockerfile
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in lisa-cicd/.env}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:?Set TAVILY_API_KEY in lisa-cicd/.env}
+      LISA_DATABASE_URL: ${LISA_DATABASE_URL:?Set LISA_DATABASE_URL in lisa-cicd/.env}
+      LISA_REDIS_URL: redis://redis:6379/0
+      LISA_CORS_ALLOWED_ORIGINS: ${LISA_CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      NET_TOOLS_API_URL: ${NET_TOOLS_API_URL:-http://net-tools-app:8000}
+      PORT: "8008"
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-http://localhost:3001}
+    ports:
+      - "127.0.0.1:8008:8008"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/openapi.json', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  lisa-ui:
+    build:
+      context: ../lisa-ui
+      dockerfile: Dockerfile
+    environment:
+      LISA_API_URL: ${LISA_API_URL:-http://localhost:8008}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      PORT: "3000"
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      lisa-api:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis-data:
+  net-tools-chroma:
+  huggingface-cache:
